@@ -3,23 +3,19 @@ from tkinter import simpledialog
 
 
 class CustomUserInputBox(simpledialog.Dialog):
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, **fields):
         self.result = None
-        self.kwargs = kwargs
+        self.fields = fields
         self.entries = {}
         super().__init__(parent, title="Confirm Location")
 
-        self.kwargs = kwargs
-
     def body(self, master):
-        row = 0
-        for key, value in self.kwargs.items():
-            tk.Label(master, text=key + ":").grid(row=row, column=0)
+        for row, (label, value) in enumerate(self.fields.items()):
+            tk.Label(master, text=f"{label}:").grid(row=row, column=0)
             entry = tk.Entry(master, width=30)
             entry.grid(row=row, column=1)
             entry.insert(tk.END, value)
-            self.entries[key] = entry
-            row += 1
+            self.entries[label] = entry
 
     def apply(self):
-        self.result = {key: entry.get() for key, entry in self.entries.items()}
+        self.result = {label: e.get() for label, e in self.entries.items()}
