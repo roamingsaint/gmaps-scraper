@@ -1,13 +1,15 @@
 import re
 from pprint import pprint
+from tkinter import messagebox
 from typing import List
 from urllib.parse import unquote
 
 import pycountry
-from colorfulPyPrint.py_color import print_error, print_exception
+from colorfulPyPrint.py_color import print_error
 from selenium.common.exceptions import NoSuchWindowException, NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium_web_automation_utils.selenium_utils import get_webdriver, find_element_wait
+from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 from gmaps_scraper.geo_utils import get_country_code, is_state_in_country
 from gmaps_scraper.tkinter_utils import CustomUserInputBox
@@ -80,10 +82,10 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
 
                 # Get rid of anything after the lat/lon values
                 try:
-                    curr_url = re.sub(r',\d+z.*', "", driver.current_url)
-                except Exception as e:
-                    print_exception(e)
-                    raise NoSuchWindowException
+                    curr_url = re.sub(r',\d+z.*', '', driver.current_url)
+                except (NewConnectionError, MaxRetryError) as e:
+                    print_error(f"{e}\nBrowser connection lost; returning collected data.")
+                    break
 
                 # Check if current URL has changed
                 if curr_url != prev_url:
@@ -136,8 +138,8 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                             dialog = CustomUserInputBox(None, fields, missing)
                             res = dialog.result
                             if res is None:
-                                # User pressed Cancel
-                                break
+                                # Cancel pressed: skip or end
+                                return results
 
                             # check for any blank required keys
                             missing = [k for k in required_keys if not res.get(k, '').strip()]
@@ -149,6 +151,16 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                             # success: strip '*' and record
                             clean = {k.rstrip('*'): v for k, v in res.items()}
                             results[clean['name']] = clean
+
+                            # ask if user wants another pick
+                            if not messagebox.askyesno(
+                                "Keep going?",
+                                " ✓ Captured. Search more?\n"
+                                "⮕ Yes: continue searching for new location in google maps.\n"
+                                "⮕ No: exit and get the data for all locations you searched."
+                            ):
+                                return results
+
                             break
 
                     # Update previous URL
@@ -160,7 +172,9 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
 
 
 if __name__ == '__main__':
-    pprint(get_google_map_details(
-        additional_required=['Your name', 'Age'],
-        additional_optional=['Last Name'],
-    ))
+    pprint(
+        get_google_map_details(
+            additional_required=['Your name'],
+            additional_optional=['Age'],
+        )
+    )
