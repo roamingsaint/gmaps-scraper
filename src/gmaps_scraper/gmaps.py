@@ -93,10 +93,10 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                     if m:
                         # Replace + with spaces and unquote name to handle accents
                         name = unquote(m.group(1).replace('+', ' '))
-                        # Names can not have commas, if they do then we captured it prematurely,
-                        # correct name will be in the next loop
-                        if ',' in name:
-                            continue
+                        # # Names can not have commas, if they do then we captured it prematurely,
+                        # # correct name will be in the next loop
+                        # if ',' in name:
+                        #     continue
 
                         # Latitude, Longitude
                         lat, lon = m.group(2).strip(), m.group(3).strip()
