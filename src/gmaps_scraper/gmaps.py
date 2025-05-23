@@ -22,6 +22,34 @@ PLACE_RE = re.compile(
 )
 
 
+def wait_for_url_stable(driver,
+                        stability_period: float = 1.0,
+                        max_wait: float = 5.0,
+                        poll: float = 0.2) -> str:
+    """
+    Poll driver.current_url every `poll` seconds until it hasn’t changed
+    for `stability_period` seconds, or until `max_wait` is exceeded.
+    Returns the last observed URL.
+    """
+    start = time.time()
+    last = driver.current_url
+    stable_since = time.time()
+
+    while True:
+        time.sleep(poll)
+        now = time.time()
+        curr = driver.current_url
+
+        if curr != last:
+            last = curr
+            stable_since = now
+        elif now - stable_since >= stability_period:
+            return curr
+
+        if now - start > max_wait:
+            return curr
+
+
 def get_city_state_country_from_plus_code(plus_code: str):
     """
     Takes a plus code as input and returns the city, state, and country.
