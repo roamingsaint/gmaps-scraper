@@ -6,7 +6,7 @@ from typing import List
 from urllib.parse import unquote
 
 import pycountry
-from colorfulPyPrint.py_color import print_error
+from colorfulPyPrint.py_color import print_error, print_yellow
 from selenium.common.exceptions import NoSuchWindowException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,7 +14,7 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium_web_automation_utils.selenium_utils import get_webdriver
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 
-from gmaps_scraper.geo_utils import get_country_code, is_state_in_country
+from gmaps_scraper.geo_utils import get_country_code, is_state_in_country, get_city_state_country_from_latlon
 from gmaps_scraper.tkinter_utils import CustomUserInputBox
 
 PLACE_RE = re.compile(
@@ -98,7 +98,7 @@ def get_city_state_country_from_plus_code(plus_code: str):
     return city, state, country
 
 
-def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None):
+def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None, debug=False):
     additional_required = additional_required or []
     additional_optional = additional_optional or []
     results = {}
@@ -109,98 +109,109 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
 
         while True:
             try:
-                # Wait for a short interval to avoid high CPU usage
                 driver.implicitly_wait(1)
-                time.sleep(2)
+                time.sleep(0.2)
                 # Exit gracefully if there is no window
                 if not driver.current_url:
                     raise NoSuchWindowException
 
-                # safe current_url read
+                # debounce until Maps really stops updating the URL
                 try:
-                    curr_url = re.sub(r',\d+z.*', '', driver.current_url)
+                    stable = wait_for_url_stable(driver)
+                    curr_url = re.sub(r',\d+z.*', '', stable)
                 except (NewConnectionError, MaxRetryError) as e:
                     print_error(f"{e}\nBrowser connection lost; returning collected data.")
                     break
 
-                # Check if current URL has changed
-                if curr_url != prev_url:
-                    m = PLACE_RE.match(curr_url)
-                    if m:
-                        # name + lat,lon
-                        name = unquote(m.group(1).replace('+', ' '))
-                        lat, lon = m.group(2).strip(), m.group(3).strip()
+                # skip if same as last processed
+                if curr_url == prev_url:
+                    continue
+                prev_url = curr_url  # mark this as the one we’re handling
 
-                        # address
-                        try:
-                            addr_elem = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']")))
-                            addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
-                        except TimeoutException as e:
-                            print_error(f"No address found: {str(e).split('Stacktrace')[0]}")
-                            addr = ''
+                if debug:
+                    print_yellow(f"url: {curr_url}")
 
-                        # plus code
-                        try:
-                            plus_elem = WebDriverWait(driver, 10).until(
-                                EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy plus code']")))
-                            plus = plus_elem.get_attribute('aria-label').replace('Plus code: ', '').strip()
-                            city, state, country = get_city_state_country_from_plus_code(plus)
-                        except TimeoutException as e:
-                            print_error(f"No plus code found: {str(e).split('Stacktrace')[0]}")
-                            city = state = country = ''
+                m = PLACE_RE.match(curr_url)
+                if not m:
+                    continue
 
-                        # build dialog fields
-                        fields = {
-                            "name*": name,
-                            "latitude*": lat,
-                            "longitude*": lon,
-                            "address": addr,
-                            "city*": city,
-                            "state": state,
-                            "country*": country,
-                        }
-                        for f in additional_required:
-                            fields[f + '*'] = ''
-                        for f in additional_optional:
-                            fields[f] = ''
+                if debug:
+                    print_yellow(" ✓ URL confirmed as valid place.")
 
-                        # determine which keys are mandatory
-                        required_keys = [k for k in fields if k.endswith('*')]
-                        missing = None
+                # name + lat,lon
+                name = unquote(m.group(1).replace('+', ' '))
+                lat, lon = m.group(2).strip(), m.group(3).strip()
 
-                        # show confirmation dialog
-                        while True:
-                            dialog = CustomUserInputBox(None, fields, missing)
-                            res = dialog.result
-                            if res is None:
-                                # Cancel pressed: skip or end
-                                return results
+                # address
+                try:
+                    addr_elem = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']")))
+                    addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
+                except TimeoutException as e:
+                    print_error(f"No address found: {str(e).split('Stacktrace')[0]}")
+                    addr = ''
 
-                            # check for blank required keys
-                            missing = [k for k in required_keys if not res.get(k, '').strip()]
-                            if missing:
-                                # preserve user entries and re-show with error
-                                fields = res
-                                continue
+                # plus code + city, state, country
+                try:
+                    city, state, country = get_city_state_country_from_latlon(lat=float(lat), lon=float(lon))
+                except Exception as e:
+                    print_error(f"Geo fallback failed: {e}")
+                    city = state = country = ""
 
-                            # success: strip '*' and record
-                            clean = {k.rstrip('*'): v for k, v in res.items()}
-                            results[clean['name']] = clean
+                # build dialog fields
+                fields = {
+                    "name*": name,
+                    "latitude*": lat,
+                    "longitude*": lon,
+                    "address": addr,
+                    "city*": city,
+                    "state": state,
+                    "country*": country,
+                }
+                for f in additional_required:
+                    fields[f + '*'] = ''
+                for f in additional_optional:
+                    fields[f] = ''
 
-                            # ask if user wants another pick
-                            if not messagebox.askyesno(
-                                    "Keep going?",
-                                    " ✓ Captured. Search more?\n"
-                                    "⮕ Yes: continue searching for new location in Google Maps.\n"
-                                    "⮕ No: exit and get the data for all locations you searched."
-                            ):
-                                return results
+                if debug:
+                    print_yellow("Scraped data")
+                    for k, v in fields.items():
+                        print_yellow(f"{k}: {v}")
 
-                            break
+                # determine which keys are mandatory
+                required_keys = [k for k in fields if k.endswith('*')]
+                missing = None
 
-                    # Update previous URL
-                    prev_url = curr_url
+                # show confirmation dialog
+                while True:
+                    dialog = CustomUserInputBox(None, fields, missing)
+                    res = dialog.result
+                    if res is None:
+                        # Cancel pressed: skip or end
+                        return results
+
+                    # check for blank required keys
+                    missing = [k for k in required_keys if not res.get(k, '').strip()]
+                    if missing:
+                        # preserve user entries and re-show with error
+                        fields = res
+                        continue
+
+                    # success: strip '*' and record
+                    clean = {k.rstrip('*'): v for k, v in res.items()}
+                    results[clean['name']] = clean
+
+                    # ask if user wants another pick
+                    if not messagebox.askyesno(
+                            "Keep going?",
+                            " ✓ Captured. Search more?\n"
+                            "⮕ Yes: continue searching for new location in Google Maps.\n"
+                            "⮕ No: exit and get the data for all locations you searched."
+                    ):
+                        return results
+
+                    break
+
             except (NoSuchWindowException, TypeError):
                 break
 
