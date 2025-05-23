@@ -1,5 +1,20 @@
 import pycountry
 from colorfulPyPrint.py_color import print_error, print_exception
+import reverse_geocoder as rg
+
+
+def get_city_state_country_from_latlon(lat: float, lon: float):
+    """
+    Given a latitude and longitude, returns
+    (city, state, country_name) via reverse_geocoder + pycountry.
+    """
+    result = rg.search((lat, lon), mode=1)  # mode=1 for single-query speed
+    top = result[0]
+    city = top['name']
+    state = top['admin1']
+    # convert ISO2 country code to full name
+    country = pycountry.countries.get(alpha_2=top['cc']).name
+    return city, state, country
 
 
 def is_state_in_country(state_name: str, country_code: str = 'US') -> bool:

@@ -10,6 +10,7 @@ requires-python = ">=3.7"
 dependencies = [
   "pycountry",
   "colorfulPyPrint",
+  "reverse_geocoder",
   "selenium-web-automation-utils",
 ]
 
