@@ -6,9 +6,11 @@ from urllib.parse import unquote
 
 import pycountry
 from colorfulPyPrint.py_color import print_error
-from selenium.common.exceptions import NoSuchWindowException, NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchWindowException, TimeoutException
 from selenium.webdriver.common.by import By
-from selenium_web_automation_utils.selenium_utils import get_webdriver, find_element_wait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium_web_automation_utils.selenium_utils import get_webdriver
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 from gmaps_scraper.geo_utils import get_country_code, is_state_in_country
@@ -91,33 +93,30 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                 if curr_url != prev_url:
                     m = re.match(r"https://www.google.com/maps/place/([^/]+)/@(-?\d+\.\d+),(-?\d+\.\d+)", curr_url)
                     if m:
-                        # Replace + with spaces and unquote name to handle accents
+                        # name + lat,lon
                         name = unquote(m.group(1).replace('+', ' '))
-                        # # Names can not have commas, if they do then we captured it prematurely,
-                        # # correct name will be in the next loop
-                        # if ',' in name:
-                        #     continue
-
-                        # Latitude, Longitude
                         lat, lon = m.group(2).strip(), m.group(3).strip()
 
-                        # Find address
+                        # 1) wait for the title to update to the new place
+                        WebDriverWait(driver, 10).until(EC.title_contains(name))
+
+                        # 2) wait for the address button to be clickable
                         try:
-                            addr_elem = find_element_wait(driver, By.XPATH,
-                                                          "//button[@data-tooltip='Copy address']", timeout=2)
+                            addr_elem = WebDriverWait(driver, 10).until(
+                                EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']")))
                             addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
-                        except (TimeoutException, NoSuchElementException) as e:
-                            print_error(f"No address: {e}")
+                        except TimeoutException as e:
+                            print_error(f"No address found: {e}")
                             addr = ''
 
-                        # Get city, state, country from the Plus code
+                        # 3) wait for the plus-code button
                         try:
-                            plus_elem = find_element_wait(driver, By.XPATH,
-                                                          "//button[@data-tooltip='Copy plus code']", timeout=2)
+                            plus_elem = WebDriverWait(driver, 10).until(
+                                EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy plus code']")))
                             plus = plus_elem.get_attribute('aria-label').replace('Plus code: ', '').strip()
                             city, state, country = get_city_state_country_from_plus_code(plus)
-                        except (TimeoutException, NoSuchElementException) as e:
-                            print_error(f"No plus code: {e}")
+                        except TimeoutException as e:
+                            print_error(f"No plus code found: {e}")
                             city = state = country = ''
 
                         # build fields dict (with '*' suffix for required)
@@ -147,7 +146,7 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                                 # Cancel pressed: skip or end
                                 return results
 
-                            # check for any blank required keys
+                            # check for blank required keys
                             missing = [k for k in required_keys if not res.get(k, '').strip()]
                             if missing:
                                 # preserve user entries and re-show with error
