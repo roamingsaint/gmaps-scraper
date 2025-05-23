@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 import pycountry
 from colorfulPyPrint.py_color import print_error
-from selenium.common.exceptions import NoSuchWindowException, NoSuchElementException
+from selenium.common.exceptions import NoSuchWindowException, NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium_web_automation_utils.selenium_utils import get_webdriver, find_element_wait
 from urllib3.exceptions import NewConnectionError, MaxRetryError
@@ -102,15 +102,21 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                         lat, lon = m.group(2).strip(), m.group(3).strip()
 
                         # Find address
-                        addr_elem = find_element_wait(driver, By.XPATH, "//button[@data-tooltip='Copy address']")
-                        addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
+                        try:
+                            addr_elem = find_element_wait(driver, By.XPATH,
+                                                          "//button[@data-tooltip='Copy address']", timeout=2)
+                            addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
+                        except (TimeoutException, NoSuchElementException) as e:
+                            print_error(f"No address: {e}")
+                            addr = ''
 
                         # Get city, state, country from the Plus code
                         try:
-                            plus_elem = find_element_wait(driver, By.XPATH, "//button[@data-tooltip='Copy plus code']")
+                            plus_elem = find_element_wait(driver, By.XPATH,
+                                                          "//button[@data-tooltip='Copy plus code']", timeout=2)
                             plus = plus_elem.get_attribute('aria-label').replace('Plus code: ', '').strip()
                             city, state, country = get_city_state_country_from_plus_code(plus)
-                        except NoSuchElementException as e:
+                        except (TimeoutException, NoSuchElementException) as e:
                             print_error(f"No plus code: {e}")
                             city = state = country = ''
 
