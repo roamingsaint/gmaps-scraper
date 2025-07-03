@@ -154,6 +154,9 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                 # plus code + city, state, country
                 try:
                     city, state, country = get_city_state_country_from_latlon(lat=float(lat), lon=float(lon))
+                    # If city is not in address, then it was likely a bad presumption, force user to enter
+                    if city not in addr:
+                        city = ""
                 except Exception as e:
                     print_error(f"Geo fallback failed: {e}")
                     city = state = country = ""
