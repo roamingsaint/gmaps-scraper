@@ -99,6 +99,37 @@ def get_city_state_country_from_plus_code(plus_code: str):
 
 
 def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None, debug=False):
+    """
+    Launches an interactive Google Maps session and collects place details.
+
+    This function opens maps.google.com in a Selenium‐driven Chrome browser,
+    watches for the user to navigate to a place URL, and once the URL has
+    stabilized, it scrapes:
+      - Place name
+      - Latitude & longitude
+      - Full address
+      - City, state, and country (via offline reverse‐geocoding)
+
+    It then pops up a Tkinter dialog asking the user to confirm these fields,
+    along with any additional required or optional fields you specify. After
+    confirmation, the data is stored (keyed by the latitude/longitude tuple)
+    and the user is asked if they’d like to pick another place.
+
+    Parameters:
+        additional_required (List[str], optional):
+            A list of custom field names to include in the dialog that
+            must be filled before proceeding.
+        additional_optional (List[str], optional):
+            A list of custom field names to include in the dialog that
+            may be left blank.
+        debug (bool, optional):
+            If True, prints debug logs for URL changes and scraped field values.
+
+    Returns:
+        Dict[Tuple[str, str], Dict[str, str]]:
+            A mapping from (latitude, longitude) tuples to the final
+            dictionary of confirmed field values for each place selected.
+    """
     additional_required = additional_required or []
     additional_optional = additional_optional or []
     results = {}
@@ -202,7 +233,8 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
 
                     # success: strip '*' and record
                     clean = {k.rstrip('*'): v for k, v in res.items()}
-                    results[clean['name']] = clean
+                    lat_lon_key = (clean['latitude'], clean['longitude'])
+                    results[lat_lon_key] = clean
 
                     # ask if user wants another pick
                     if not messagebox.askyesno(
