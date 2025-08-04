@@ -40,7 +40,7 @@ print(data)
 ```python
 from gmaps_scraper import get_google_map_details
 
-data = get_google_map_details(search_term="Empire State Building")
+data = get_google_map_details(search_terms=["Empire State Building", "Central Park"])
 print(data)
 ```
 

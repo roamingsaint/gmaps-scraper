@@ -113,21 +113,25 @@ def get_rating_and_reviews(driver, gmaps_name):
     # 3) find the reviews span anywhere within it
     try:
         reviews_elem = container.find_element(By.XPATH, ".//span[contains(@aria-label,'reviews')]")
-        reviews = reviews_elem.get_attribute("aria-label").split(' ').replace(',', '')
+        reviews = reviews_elem.get_attribute("aria-label").split(' ')[0].replace(',', '')
     except NoSuchElementException:
         reviews = ""
 
     return rating, reviews
 
 
-def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None,
-                           search_terms: list = None, debug=False):
+def get_google_map_details(
+    additional_required: List[str] = None,
+    additional_optional: List[str] = None,
+    search_terms: List[str] = None,
+    debug: bool = False
+):
     """
     Launches an interactive Google Maps session and collects place details.
 
     This function opens maps.google.com in a Selenium‐driven Chrome browser,
-    watches for the user to navigate to a place URL, and once the URL has
-    stabilized, it scrapes:
+    watches for the user to navigate to a place URL (either via automatic
+    searches or manual navigation), and once the URL has stabilized, it scrapes:
       - Place name
       - Latitude & longitude
       - Full address
@@ -135,9 +139,11 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
       - Ratings, no. of reviews
 
     It then pops up a Tkinter dialog asking the user to confirm these fields,
-    along with any additional required or optional fields you specify. After
-    confirmation, the data is stored (keyed by the latitude/longitude tuple)
-    and the user is asked if they’d like to pick another place.
+    along with any additional required or optional fields you specify.
+    After confirmation, the data is stored (keyed by the latitude/longitude tuple).
+
+    If you pass a non‐empty search_terms list, it will run each search in turn.
+    Once those are done, it will always prompt “Keep going?” for manual picks.
 
     Parameters:
         additional_required (List[str], optional):
@@ -146,48 +152,52 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
         additional_optional (List[str], optional):
             A list of custom field names to include in the dialog that
             may be left blank.
-        search_terms (Union{List, str]):
+        search_terms (List[str]):
             Term (str) or List of terms to enter into 'Search Google Maps'
         debug (bool, optional):
             If True, prints debug logs for URL changes and scraped field values.
 
     Returns:
         Dict[Tuple[str, str], Dict[str, str]]:
-            A mapping from (latitude, longitude) tuples to the final
+            Mapping from (latitude, longitude) tuples to the final
             dictionary of confirmed field values for each place selected.
     """
     additional_required = additional_required or []
     additional_optional = additional_optional or []
     results = {}
 
+    # make a copy, so we don’t mutate the caller’s list
+    terms = [search_terms] if isinstance(search_terms, str) else list(search_terms or [])
+
     with get_webdriver() as driver:
         driver.get("https://maps.google.com")
         prev_url = re.sub(r',\d+z.*', '', driver.current_url)
-        if search_terms:
-            search_elem = find_element_wait(driver, By.XPATH, "//form/input")
-            search_elem.send_keys(search_terms.pop(0))
-            search_elem.send_keys(Keys.ENTER)
 
-        while True:
-            try:
+        def pick_and_scrape(search_term: str = None):
+            nonlocal prev_url, results
+            # 1) if a search term is provided, run it
+            if search_term:
+                search_elem = find_element_wait(driver, By.XPATH, "//form/input")
+                search_elem.clear()
+                search_elem.send_keys(search_term, Keys.ENTER)
+
+            # 2) wait for the URL to stabilize, then scrape one place
+            while True:
                 driver.implicitly_wait(1)
                 time.sleep(0.2)
-                # Exit gracefully if there is no window
                 if not driver.current_url:
-                    raise NoSuchWindowException
+                    raise NoSuchWindowException()
 
-                # debounce until Maps really stops updating the URL
                 try:
                     stable = wait_for_url_stable(driver)
-                    curr_url = re.sub(r',\d+z.*', '', stable)
                 except (NewConnectionError, MaxRetryError) as e:
                     print_error(f"{e}\nBrowser connection lost; returning collected data.")
-                    break
+                    return
 
-                # skip if same as last processed
+                curr_url = re.sub(r',\d+z.*', '', stable)
                 if curr_url == prev_url:
                     continue
-                prev_url = curr_url  # mark this as the one we’re handling
+                prev_url = curr_url
 
                 if debug:
                     print_yellow(f"url: {curr_url}")
@@ -199,30 +209,33 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                 if debug:
                     print_yellow(" ✓ URL confirmed as valid place.")
 
-                # name + lat,lon
+                # --- scrape ---
+                # name + lat/lon
                 name = unquote(m.group(1).replace('+', ' '))
                 lat, lon = m.group(2).strip(), m.group(3).strip()
 
                 # address
                 try:
-                    addr_elem = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']")))
-                    addr = addr_elem.get_attribute('aria-label').replace('Address: ', '').strip()
-                except TimeoutException as e:
-                    print_error(f"No address found: {str(e).split('Stacktrace')[0]}")
-                    addr = ''
+                    addr_btn = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']"))
+                    )
+                    addr = addr_btn.get_attribute('aria-label').replace('Address: ', '').strip()
+                except TimeoutException:
+                    print_error("No address found")
+                    addr = ""
 
-                # plus code + city, state, country
+                # city/state/country via reverse‐geocode
                 try:
-                    city, state, country = get_city_state_country_from_latlon(lat=float(lat), lon=float(lon))
-                    # If city is not in address, then it was likely a bad presumption, force user to enter
+                    city, state, country = get_city_state_country_from_latlon(
+                        lat=float(lat), lon=float(lon)
+                    )
                     if city not in addr:
                         city = ""
                 except Exception as e:
                     print_error(f"Geo fallback failed: {e}")
                     city = state = country = ""
 
-                # rating and review
+                # rating & reviews
                 rating, reviews = get_rating_and_reviews(driver, gmaps_name=name)
 
                 # build dialog fields
@@ -247,17 +260,14 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                     for k, v in fields.items():
                         print_yellow(f"{k}: {v}")
 
-                # determine which keys are mandatory
+                # confirm with the user
                 required_keys = [k for k in fields if k.endswith('*')]
                 missing = None
-
-                # show confirmation dialog
                 while True:
                     dialog = CustomUserInputBox(None, fields, missing)
                     res = dialog.result
                     if res is None:
-                        # Cancel pressed: skip or end
-                        return results
+                        return  # user cancelled
 
                     # check for blank required keys
                     missing = [k for k in required_keys if not res.get(k, '').strip()]
@@ -266,29 +276,31 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                         fields = res
                         continue
 
-                    # success: strip '*' and record
+                    # strip '*' and save
                     clean = {k.rstrip('*'): v for k, v in res.items()}
-                    lat_lon_key = (clean['latitude'], clean['longitude'])
-                    results[lat_lon_key] = clean
-
-                    # ask if user wants another pick
-                    if search_terms:
-                        search_elem = find_element_wait(driver, By.XPATH, "//form/input")
-                        search_elem.send_keys(search_terms.pop(0))
-                        search_elem.send_keys(Keys.ENTER)
-                    else:
-                        if not messagebox.askyesno(
-                                "Keep going?",
-                                " ✓ Captured. Search more?\n"
-                                "⮕ Yes: continue searching for new location in Google Maps.\n"
-                                "⮕ No: exit and get the data for all locations you searched."
-                        ):
-                            return results
-
+                    results[(clean['latitude'], clean['longitude'])] = clean
                     break
 
-            except (NoSuchWindowException, TypeError):
+                # done scraping one place
+                return
+
+        # 1) automatic searches
+        if not terms:
+            pick_and_scrape(None)
+        else:
+            for term in terms:
+                pick_and_scrape(term)
+
+        # 2) manual continuation
+        while True:
+            if not messagebox.askyesno(
+                "Keep going?",
+                " ✓ Captured. Search more?\n"
+                "⮕ Yes: enter new location in Google Maps.\n"
+                "⮕ No: finish and return all results."
+            ):
                 break
+            pick_and_scrape(None)
 
     return results
 
