@@ -99,6 +99,27 @@ def get_city_state_country_from_plus_code(plus_code: str):
     return city, state, country
 
 
+def get_rating_and_reviews(driver, gmaps_name):
+    # 1) jump to the ratings container
+    container = driver.find_element(By.XPATH, f"//div[h1[text()='{gmaps_name}']]/following-sibling::div[1]")
+
+    # 2) find the stars span anywhere within it
+    try:
+        rating_elem = container.find_element(By.XPATH, ".//span[contains(@aria-label,'stars')]")
+        rating = rating_elem.get_attribute("aria-label").split(' ')[0]
+    except NoSuchElementException:
+        rating = ""
+
+    # 3) find the reviews span anywhere within it
+    try:
+        reviews_elem = container.find_element(By.XPATH, ".//span[contains(@aria-label,'reviews')]")
+        reviews = reviews_elem.get_attribute("aria-label").split(' ').replace(',', '')
+    except NoSuchElementException:
+        reviews = ""
+
+    return rating, reviews
+
+
 def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None,
                            search_term=None, debug=False):
     """
@@ -111,6 +132,7 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
       - Latitude & longitude
       - Full address
       - City, state, and country (via offline reverse‐geocoding)
+      - Ratings, no. of reviews
 
     It then pops up a Tkinter dialog asking the user to confirm these fields,
     along with any additional required or optional fields you specify. After
@@ -200,6 +222,9 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                     print_error(f"Geo fallback failed: {e}")
                     city = state = country = ""
 
+                # rating and review
+                rating, reviews = get_rating_and_reviews(driver, gmaps_name=name)
+
                 # build dialog fields
                 fields = {
                     "name*": name,
@@ -209,6 +234,8 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
                     "city*": city,
                     "state": state,
                     "country*": country,
+                    "ratings": rating,
+                    "reviews": reviews,
                 }
                 for f in additional_required:
                     fields[f + '*'] = ''
