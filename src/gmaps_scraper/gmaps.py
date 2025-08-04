@@ -99,25 +99,46 @@ def get_city_state_country_from_plus_code(plus_code: str):
     return city, state, country
 
 
-def get_rating_and_reviews(driver, gmaps_name):
+def get_rating_reviews_category(driver, gmaps_name):
     # 1) jump to the ratings container
-    container = driver.find_element(By.XPATH, f"//div[h1[text()='{gmaps_name}']]/following-sibling::div[1]")
+    container = driver.find_element(
+        By.XPATH,
+        f"//div[h1[text()='{gmaps_name}']]/following-sibling::div[1]"
+    )
 
-    # 2) find the stars span anywhere within it
+    # 2) rating
     try:
-        rating_elem = container.find_element(By.XPATH, ".//span[contains(@aria-label,'stars')]")
-        rating = rating_elem.get_attribute("aria-label").split(' ')[0]
+        rating_elem = container.find_element(
+            By.XPATH,
+            ".//span[contains(@aria-label,'stars')]"
+        )
+        # pull just the number, e.g. "4.4"
+        rating = rating_elem.get_attribute("aria-label").split()[0]
     except NoSuchElementException:
         rating = ""
 
-    # 3) find the reviews span anywhere within it
+    # 3) reviews
     try:
-        reviews_elem = container.find_element(By.XPATH, ".//span[contains(@aria-label,'reviews')]")
-        reviews = reviews_elem.get_attribute("aria-label").split(' ')[0].replace(',', '')
+        reviews_elem = container.find_element(
+            By.XPATH,
+            ".//span[contains(@aria-label,'reviews')]"
+        )
+        # strip commas and “reviews”
+        reviews = reviews_elem.get_attribute("aria-label").split()[0].replace(",", "")
     except NoSuchElementException:
         reviews = ""
 
-    return rating, reviews
+    # 4) category
+    try:
+        cat_elem = container.find_element(
+            By.XPATH,
+            ".//button[contains(@jsaction,'category')]"
+        )
+        category = cat_elem.text.strip()
+    except NoSuchElementException:
+        category = ""
+
+    return rating, reviews, category
 
 
 def get_google_map_details(
@@ -236,7 +257,7 @@ def get_google_map_details(
                     city = state = country = ""
 
                 # rating & reviews
-                rating, reviews = get_rating_and_reviews(driver, gmaps_name=name)
+                rating, reviews, category = get_rating_reviews_category(driver, gmaps_name=name)
 
                 # build dialog fields
                 fields = {
@@ -249,6 +270,7 @@ def get_google_map_details(
                     "country*": country,
                     "ratings": rating,
                     "reviews": reviews,
+                    "category": category,
                 }
                 for f in additional_required:
                     fields[f + '*'] = ''
