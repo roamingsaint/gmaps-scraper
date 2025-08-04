@@ -8,10 +8,11 @@ from urllib.parse import unquote
 import pycountry
 from colorfulPyPrint.py_color import print_error, print_yellow
 from selenium.common.exceptions import NoSuchWindowException, TimeoutException
+from selenium.webdriver import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
-from selenium_web_automation_utils.selenium_utils import get_webdriver
+from selenium_web_automation_utils.selenium_utils import get_webdriver, find_element_wait, type_keys
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 from gmaps_scraper.geo_utils import get_country_code, is_state_in_country, get_city_state_country_from_latlon
@@ -98,7 +99,8 @@ def get_city_state_country_from_plus_code(plus_code: str):
     return city, state, country
 
 
-def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None, debug=False):
+def get_google_map_details(additional_required: List[str] = None, additional_optional: List[str] = None,
+                           search_term=None, debug=False):
     """
     Launches an interactive Google Maps session and collects place details.
 
@@ -122,6 +124,8 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
         additional_optional (List[str], optional):
             A list of custom field names to include in the dialog that
             may be left blank.
+        search_term (str):
+            Term to enter into 'Search Google Maps'
         debug (bool, optional):
             If True, prints debug logs for URL changes and scraped field values.
 
@@ -137,6 +141,10 @@ def get_google_map_details(additional_required: List[str] = None, additional_opt
     with get_webdriver() as driver:
         driver.get("https://maps.google.com")
         prev_url = re.sub(r',\d+z.*', '', driver.current_url)
+        if search_term:
+            search_elem = find_element_wait(driver, By.XPATH, "//form/input")
+            type_keys(search_elem, search_term)
+            search_elem.send_keys(Keys.ENTER)
 
         while True:
             try:

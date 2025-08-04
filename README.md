@@ -35,6 +35,15 @@ print(data)
 # => { "Central Park": { "latitude": "...", "longitude": "...", ... } }
 ```
 
+### With search term
+
+```python
+from gmaps_scraper import get_google_map_details
+
+data = get_google_map_details(search_term="Empire State Building")
+print(data)
+```
+
 ### With custom fields
 
 ```python
