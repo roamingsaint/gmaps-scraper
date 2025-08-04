@@ -157,7 +157,7 @@ def get_google_map_details(
       - Latitude & longitude
       - Full address
       - City, state, and country (via offline reverse‐geocoding)
-      - Ratings, no. of reviews
+      - Rating, Reviews, Category
 
     It then pops up a Tkinter dialog asking the user to confirm these fields,
     along with any additional required or optional fields you specify.

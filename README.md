@@ -12,6 +12,7 @@
   - Latitude & longitude
   - Full address
   - City, state, country (via Plus code)
+  - Rating, Reviews, Category
 - **Custom fields**: define required `*` or optional fields in your dialog
 - **Repeatable picks**: after each capture, you’re asked “Keep going?” 
 - Clean teardown of browser sessions
