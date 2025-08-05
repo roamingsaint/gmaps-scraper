@@ -201,132 +201,145 @@ def get_google_map_details(
 
         def pick_and_scrape(search_term: str = None):
             nonlocal prev_url, results
-            # 1) if a search term is provided, run it
+
+            # Reset so we accept the first new URL each time
+            prev_url = None
+
+            # 1) If a search term is provided, run it
             if search_term:
                 search_elem = find_element_wait(driver, By.XPATH, "//form/input")
                 search_elem.clear()
                 search_elem.send_keys(search_term, Keys.ENTER)
 
-            # 2) wait for the URL to stabilize, then scrape one place
-            while True:
-                driver.implicitly_wait(1)
-                time.sleep(0.2)
-                if not driver.current_url:
-                    raise NoSuchWindowException()
+            # 2) Wait for the place URL to change (with retry limit)
+            max_wait = 8.0
+            poll = 0.2
+            max_attempts = int(max_wait / poll) + 1
+            attempts = 0
 
+            while True:
                 try:
-                    stable = wait_for_url_stable(driver)
+                    stable = wait_for_url_stable(
+                        driver,
+                        stability_period=3.0,
+                        max_wait=max_wait,
+                        poll=poll
+                    )
                 except (NewConnectionError, MaxRetryError) as e:
-                    print_error(f"{e}\nBrowser connection lost; returning collected data.")
+                    print_error(f"{e}\nBrowser connection lost; aborting.")
                     return
 
                 curr_url = re.sub(r',\d+z.*', '', stable)
-                if curr_url == prev_url:
-                    continue
-                prev_url = curr_url
 
+                if curr_url == prev_url:
+                    attempts += 1
+                    if attempts >= max_attempts:
+                        print_error(f"URL never moved on this search (after {max_attempts} attempts; skipping.")
+                        return
+                    continue
+
+                prev_url = curr_url
                 if debug:
                     print_yellow(f"url: {curr_url}")
+                break
 
-                m = PLACE_RE.match(curr_url)
-                if not m:
+            # 3) We have a new, stable URL—now scrape it once
+            m = PLACE_RE.match(curr_url)
+            if not m:
+                return  # not a valid place URL
+
+            if debug:
+                print_yellow(" ✓ URL confirmed as valid place.")
+
+            # name + lat/lon
+            name = unquote(m.group(1).replace('+', ' '))
+            lat, lon = m.group(2).strip(), m.group(3).strip()
+
+            # address
+            try:
+                addr_btn = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']"))
+                )
+                addr = addr_btn.get_attribute('aria-label').replace('Address: ', '').strip()
+            except TimeoutException:
+                print_error("No address found")
+                addr = ""
+
+            # city/state/country via reverse‐geocode
+            try:
+                city, state, country = get_city_state_country_from_latlon(
+                    lat=float(lat), lon=float(lon)
+                )
+                if city not in addr:
+                    city = ""
+            except Exception as e:
+                print_error(f"Geo fallback failed: {e}")
+                city = state = country = ""
+
+            # rating & reviews & category
+            rating, reviews, category = get_rating_reviews_category(driver, gmaps_name=name)
+
+            # build dialog fields
+            fields = {
+                "name*": name,
+                "latitude*": lat,
+                "longitude*": lon,
+                "address": addr,
+                "city*": city,
+                "state": state,
+                "country*": country,
+                "rating": rating,
+                "reviews": reviews,
+                "category": category,
+            }
+            for f in additional_required:
+                fields[f + '*'] = ''
+            for f in additional_optional:
+                fields[f] = ''
+
+            if debug:
+                print_yellow("Scraped data")
+                for k, v in fields.items():
+                    print_yellow(f"{k}: {v}")
+
+            # decide if we need confirmation
+            required_keys = [k for k in fields if k.endswith('*')]
+            if confirmation_mode == "always":
+                needs_confirmation = True
+            elif confirmation_mode == "on_missing":
+                needs_confirmation = any(not v.strip() for v in fields.values())
+            elif confirmation_mode == "on_required_missing":
+                needs_confirmation = any(not fields[k].strip() for k in required_keys)
+            else:
+                raise ValueError(f"Invalid confirmation_mode: {confirmation_mode!r}")
+
+            # if no confirmation, save and return
+            if not needs_confirmation:
+                clean = {k.rstrip('*'): v for k, v in fields.items()}
+                results[(clean['latitude'], clean['longitude'])] = clean
+                return
+
+            # otherwise show dialog
+            missing = None
+            while True:
+                dialog = CustomUserInputBox(None, fields, missing)
+                res = dialog.result
+                if res is None:
+                    return  # user cancelled
+
+                # re-check for blank required keys
+                missing = [k for k in required_keys if not res.get(k, '').strip()]
+                if missing:
+                    # preserve user entries and re-show with error
+                    fields = res
                     continue
 
-                if debug:
-                    print_yellow(" ✓ URL confirmed as valid place.")
+                # strip '*' and save
+                clean = {k.rstrip('*'): v for k, v in res.items()}
+                results[(clean['latitude'], clean['longitude'])] = clean
+                break
 
-                # --- scrape ---
-                # name + lat/lon
-                name = unquote(m.group(1).replace('+', ' '))
-                lat, lon = m.group(2).strip(), m.group(3).strip()
-
-                # address
-                try:
-                    addr_btn = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[@data-tooltip='Copy address']"))
-                    )
-                    addr = addr_btn.get_attribute('aria-label').replace('Address: ', '').strip()
-                except TimeoutException:
-                    print_error("No address found")
-                    addr = ""
-
-                # city/state/country via reverse‐geocode
-                try:
-                    city, state, country = get_city_state_country_from_latlon(
-                        lat=float(lat), lon=float(lon)
-                    )
-                    if city not in addr:
-                        city = ""
-                except Exception as e:
-                    print_error(f"Geo fallback failed: {e}")
-                    city = state = country = ""
-
-                # rating & reviews
-                rating, reviews, category = get_rating_reviews_category(driver, gmaps_name=name)
-
-                # build dialog fields
-                fields = {
-                    "name*": name,
-                    "latitude*": lat,
-                    "longitude*": lon,
-                    "address": addr,
-                    "city*": city,
-                    "state": state,
-                    "country*": country,
-                    "rating": rating,
-                    "reviews": reviews,
-                    "category": category,
-                }
-                for f in additional_required:
-                    fields[f + '*'] = ''
-                for f in additional_optional:
-                    fields[f] = ''
-
-                if debug:
-                    print_yellow("Scraped data")
-                    for k, v in fields.items():
-                        print_yellow(f"{k}: {v}")
-
-                # decide if we need confirmation
-                required_keys = [k for k in fields if k.endswith('*')]
-
-                if confirmation_mode == "always":
-                    needs_confirmation = True
-                elif confirmation_mode == "on_missing":
-                    needs_confirmation = any(not v.strip() for v in fields.values())
-                elif confirmation_mode == "on_required_missing":
-                    needs_confirmation = any(not fields[k].strip() for k in required_keys)
-                else:
-                    raise ValueError(f"Invalid confirmation_mode: {confirmation_mode!r}")
-
-                # if no confirmation needed, save and return immediately
-                if not needs_confirmation:
-                    clean = {k.rstrip('*'): v for k, v in fields.items()}
-                    results[(clean['latitude'], clean['longitude'])] = clean
-                    return
-
-                # otherwise fall back to the existing confirmation loop
-                missing = None
-                while True:
-                    dialog = CustomUserInputBox(None, fields, missing)
-                    res = dialog.result
-                    if res is None:
-                        return  # user cancelled
-
-                    # re-check for blank required keys
-                    missing = [k for k in required_keys if not res.get(k, '').strip()]
-                    if missing:
-                        # preserve user entries and re-show with error
-                        fields = res
-                        continue
-
-                    # strip '*' and save
-                    clean = {k.rstrip('*'): v for k, v in res.items()}
-                    results[(clean['latitude'], clean['longitude'])] = clean
-                    break
-
-                # done scraping one place
-                return
+            return
 
         # batch vs manual mode
         if terms:

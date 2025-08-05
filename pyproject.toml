@@ -1,6 +1,6 @@
 [project]
 name = "gmaps-scraper"
-version = "0.4.3"
+version = "0.4.4"
 description = "Interactive Google Maps scraper with Tkinter confirmation"
 readme = "README.md"
 authors = [{name = "Kanad Rishiraj (RoamingSaint)", email = "roamingsaint27@gmail.com"}]
