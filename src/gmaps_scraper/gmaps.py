@@ -1,8 +1,9 @@
 import re
 import time
 from pprint import pprint
+import tkinter as tk
 from tkinter import messagebox
-from typing import List
+from typing import List, Literal, Dict, Tuple, Union
 from urllib.parse import unquote
 
 import pycountry
@@ -144,44 +145,45 @@ def get_rating_reviews_category(driver, gmaps_name):
 def get_google_map_details(
     additional_required: List[str] = None,
     additional_optional: List[str] = None,
-    search_terms: List[str] = None,
+    search_terms: Union[List[str], str] = None,
+    confirmation_mode: Literal["always", "on_missing", "on_required_missing"] = "always",
     debug: bool = False
-):
+) -> Dict[Tuple[str, str], Dict[str, str]]:
     """
-    Launches an interactive Google Maps session and collects place details.
+    Launches a Google Maps session and collects place details, in either batch or fully interactive mode.
 
     This function opens maps.google.com in a Selenium‐driven Chrome browser,
-    watches for the user to navigate to a place URL (either via automatic
-    searches or manual navigation), and once the URL has stabilized, it scrapes:
+    waits for the URL to stabilize on a place, and scrapes:
       - Place name
       - Latitude & longitude
       - Full address
-      - City, state, and country (via offline reverse‐geocoding)
+      - City, state, country (reverse‐geocode)
       - Rating, Reviews, Category
 
-    It then pops up a Tkinter dialog asking the user to confirm these fields,
-    along with any additional required or optional fields you specify.
-    After confirmation, the data is stored (keyed by the latitude/longitude tuple).
-
-    If you pass a non‐empty search_terms list, it will run each search in turn.
-    Once those are done, it will always prompt “Keep going?” for manual picks.
+    It either runs a batch of searches (if `search_terms` is provided) or
+    enters manual‐pick mode.  In batch mode it scrapes exactly each term and
+    returns immediately.  In manual mode it pops up a Tkinter confirmation dialog
+    after each scrape and then repeatedly asks “Keep going?” until you click No.
 
     Parameters:
         additional_required (List[str], optional):
-            A list of custom field names to include in the dialog that
-            must be filled before proceeding.
+            Custom field names that **must** be filled in the dialog.
         additional_optional (List[str], optional):
-            A list of custom field names to include in the dialog that
-            may be left blank.
-        search_terms (List[str]):
-            Term (str) or List of terms to enter into 'Search Google Maps'
+            Custom field names that **may** be left blank.
+        search_terms (List[str] or str, optional):
+            A term or list of terms to automatically search and scrape.  If omitted,
+            you must navigate manually in the map.
+        confirmation_mode (Literal["always", "on_missing", "on_required_missing"], optional):
+            Controls whether and when to show the confirmation dialog:
+              - "always": prompt every time (default in manual mode)
+              - "on_missing": prompt only if *any* field is blank
+              - "on_required_missing": prompt only if a *required* field is blank
         debug (bool, optional):
-            If True, prints debug logs for URL changes and scraped field values.
+            If True, prints debug logs for URL changes and scraped values.
 
     Returns:
         Dict[Tuple[str, str], Dict[str, str]]:
-            Mapping from (latitude, longitude) tuples to the final
-            dictionary of confirmed field values for each place selected.
+            Mapping from (latitude, longitude) tuples to your confirmed data.
     """
     additional_required = additional_required or []
     additional_optional = additional_optional or []
@@ -192,6 +194,9 @@ def get_google_map_details(
 
     with get_webdriver() as driver:
         driver.get("https://maps.google.com")
+        # prepare hidden Tk root for messagebox
+        _tk_root = tk.Tk()
+        _tk_root.withdraw()
         prev_url = re.sub(r',\d+z.*', '', driver.current_url)
 
         def pick_and_scrape(search_term: str = None):
@@ -282,8 +287,25 @@ def get_google_map_details(
                     for k, v in fields.items():
                         print_yellow(f"{k}: {v}")
 
-                # confirm with the user
+                # decide if we need confirmation
                 required_keys = [k for k in fields if k.endswith('*')]
+
+                if confirmation_mode == "always":
+                    needs_confirmation = True
+                elif confirmation_mode == "on_missing":
+                    needs_confirmation = any(not v.strip() for v in fields.values())
+                elif confirmation_mode == "on_required_missing":
+                    needs_confirmation = any(not fields[k].strip() for k in required_keys)
+                else:
+                    raise ValueError(f"Invalid confirmation_mode: {confirmation_mode!r}")
+
+                # if no confirmation needed, save and return immediately
+                if not needs_confirmation:
+                    clean = {k.rstrip('*'): v for k, v in fields.items()}
+                    results[(clean['latitude'], clean['longitude'])] = clean
+                    return
+
+                # otherwise fall back to the existing confirmation loop
                 missing = None
                 while True:
                     dialog = CustomUserInputBox(None, fields, missing)
@@ -291,7 +313,7 @@ def get_google_map_details(
                     if res is None:
                         return  # user cancelled
 
-                    # check for blank required keys
+                    # re-check for blank required keys
                     missing = [k for k in required_keys if not res.get(k, '').strip()]
                     if missing:
                         # preserve user entries and re-show with error
@@ -306,25 +328,30 @@ def get_google_map_details(
                 # done scraping one place
                 return
 
-        # 1) automatic searches
-        if not terms:
-            pick_and_scrape(None)
-        else:
-            for term in terms:
-                pick_and_scrape(term)
+        # batch vs manual mode
+        if terms:
+            # batch mode: run provided searches and return immediately,
+            # but always destroy the hidden Tk root even on error
+            try:
+                for term in terms:
+                    pick_and_scrape(term)
+                return results
+            finally:
+                _tk_root.destroy()
 
-        # 2) manual continuation
-        while True:
-            if not messagebox.askyesno(
-                "Keep going?",
-                " ✓ Captured. Search more?\n"
-                "⮕ Yes: enter new location in Google Maps.\n"
-                "⮕ No: finish and return all results."
-            ):
-                break
+        # manual mode: pick once, then ask “Keep going?” until user says no
+        pick_and_scrape(None)
+        while messagebox.askyesno(
+            "Keep going?",
+            " ✓ Captured. Search more?\n"
+            "⮕ Yes: enter new location in Google Maps.\n"
+            "⮕ No: finish and return all results."
+        ):
             pick_and_scrape(None)
 
-    return results
+        # teardown and return
+        _tk_root.destroy()
+        return results
 
 
 if __name__ == '__main__':
