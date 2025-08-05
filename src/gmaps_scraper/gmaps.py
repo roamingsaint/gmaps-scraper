@@ -273,7 +273,7 @@ def get_google_map_details(
                     "city*": city,
                     "state": state,
                     "country*": country,
-                    "ratings": rating,
+                    "rating": rating,
                     "reviews": reviews,
                     "category": category,
                 }
