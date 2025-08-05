@@ -103,7 +103,7 @@ def get_rating_reviews_category(driver, gmaps_name):
     # 1) jump to the ratings container
     container = driver.find_element(
         By.XPATH,
-        f"//div[h1[text()='{gmaps_name}']]/following-sibling::div[1]"
+        f"""//div[h1[text()="{gmaps_name}"]]/following-sibling::div[1]"""
     )
 
     # 2) rating
